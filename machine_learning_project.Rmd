@@ -1,0 +1,113 @@
+---
+title: "Prractical_Machine_Learning_Project_TMEIR"
+author: "Talmor Meir"
+date: "June 3, 2016"
+output: html_document
+---
+
+This project uses data from:
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+We are given data from accelerometers on the belt, forearm, arm, and dumbell for 6 participants. Our training data consists of a label identifying the quality of the exercise. Our goal is to predict the labels for the test set observations.
+
+
+###libraries used: 
+```{r,message=F, warning=F}
+#library(AppliedPredictiveModeling)
+library(caret)
+library(rattle)
+library(randomForest)
+library(e1071)
+```
+
+### Download the data and look into the files:
+note that since I am behind a fire wall I had to manually download and save onto my laptop
+```{r}
+df_training <- read.csv("C:/Users/i57757/Documents/R/pml-training.csv", na.strings=c("NA",""), header=TRUE)
+colnames_train <- colnames(df_training)
+df_testing <- read.csv("C:/Users/i57757/Documents/R/pml-testing.csv", na.strings=c("NA",""), header=TRUE)
+colnames_test <- colnames(df_testing)
+```
+### Data Processing
+Some minor clean up and data processing includes: reducing the number of features with too many NAs, very small variance and general intution.
+```{r}
+# remove variables with nearly zero variance
+nzVariance <- nearZeroVar(df_training)
+df_training1 <- df_training[, -nzVariance]
+
+# remove variables that are almost always NA
+mostlyNA <- sapply(df_training1, function(x) mean(is.na(x))) > 0.95
+df_training1 <- df_training1[, mostlyNA==F]
+
+# remove variables that are non-numeric:(X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp), which happen to be the first five variables
+df_training1 <- df_training1[, -(1:5)]
+```
+### divide data into training and testing samples
+I split the data into training set (70%) and validation set (30%): 
+```{r}
+set.seed(123)
+splitdata <- createDataPartition(y=df_training1$classe, p=0.7, list=F)
+train1 <- df_training1[splitdata, ]
+train2 <- df_training1[-splitdata, ]
+```
+
+###Investigating Models
+My first attempt is using the Random forest Model: 
+```{r}
+Control <- trainControl(method="cv", number=3) # settings: using 3 folds
+fit <- train(classe ~ ., data=train1, method="rf", trControl=Control) #fit the model
+fit
+fit$finalModel #print final model
+plot(fit,main="Random Forest Error")
+```
+
+The model uses 53 predictors and divides the data into 5 classes with a 99% accuracy and 0.25% OOB error. 
+That is pretty good!!!
+It seems that I don't need so many predictors to do a good enough job, I will therefore look at importance based on purity of the nodes and downsize my predictors.
+
+```{r}
+train1.rf <- randomForest(classe ~ ., data=train1, ntree=500,keep.forest=FALSE, importance=TRUE)
+x<-importance(train1.rf,type=2) #type 2=mean decarese in node impurity
+y<-as.data.frame(x[order(x,decreasing=TRUE),])
+y<-head(y,30) #select top 30 predictors
+train_top30<-train1[,c('classe','num_window','roll_belt','yaw_belt','pitch_forearm','magnet_dumbbell_z','pitch_belt','magnet_dumbbell_y','roll_dumbbell','accel_belt_z','accel_dumbbell_y','magnet_belt_z','magnet_belt_y',
+'accel_dumbbell_z','accel_forearm_x','roll_arm','total_accel_dumbbell','gyros_belt_z','magnet_arm_x',
+'total_accel_belt','yaw_dumbbell','magnet_belt_x','magnet_forearm_z','accel_arm_x','accel_dumbbell_x',
+'gyros_dumbbell_y','accel_forearm_z','yaw_arm','magnet_arm_y')]
+
+Control <- trainControl(method="cv", number=3) # settings: using 3 folds
+fit_top30 <- train(classe ~ ., data=train_top30, method="rf", trControl=Control) #fit the model
+fit_top30
+fit_top30$finalModel #print final model
+```
+
+I will now test my random forest model on the 30% validation set we created earlier
+
+```{r}
+preds <- predict(fit_top30, train2)
+confusionMatrix(train2$classe, preds)
+```
+
+The model using only the 30 top most important predictors still has high performance with 99% accuracy
+
+```{r}
+# re-fit model using full training set we initially downloaded with only the top 30 predictors previously selected
+df_training1<-df_training1[,c('classe','num_window','roll_belt','yaw_belt','pitch_forearm','magnet_dumbbell_z','pitch_belt','magnet_dumbbell_y','roll_dumbbell','accel_belt_z','accel_dumbbell_y','magnet_belt_z','magnet_belt_y',
+'accel_dumbbell_z','accel_forearm_x','roll_arm','total_accel_dumbbell','gyros_belt_z','magnet_arm_x',
+'total_accel_belt','yaw_dumbbell','magnet_belt_x','magnet_forearm_z','accel_arm_x','accel_dumbbell_x',
+'gyros_dumbbell_y','accel_forearm_z','yaw_arm','magnet_arm_y')]
+fitControl <- trainControl(method="cv", number=3, verboseIter=F)
+fit_full <- train(classe ~ ., data=df_training1, method="rf", trControl=fitControl)
+fit_full$finalModel
+fit_full
+```
+When using the full training data we can see that each group (out of the total 5) has less mixing from other groups (in comparing to the above analysis), this is a more precises predicting model.
+
+###Making final prediction from the observed data set
+```{r}
+final_preds <- predict(fit_full, newdata=df_testing)
+final_preds <- as.character(final_preds)
+final_preds
+
+# export results
+#write.csv(preds,"C:/Users/i57757/Documents/R/Practical_machine_learning_project.csv")
